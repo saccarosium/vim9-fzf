@@ -3,62 +3,8 @@ if exists('g:loaded_fzf_vim')
 endif
 let g:loaded_fzf_vim = 1
 
-let s:cpo_save = &cpo
-set cpo&vim
-let s:is_win = has('win32') || has('win64')
-
-if s:is_win && &shellslash
-  set noshellslash
-  let s:base_dir = expand('<sfile>:h:h')
-  set shellslash
-else
-  let s:base_dir = expand('<sfile>:h:h')
-endif
-if s:is_win
-  let s:term_marker = '&::FZF'
-
-  function! s:fzf_call(fn, ...)
-    let shellslash = &shellslash
-    try
-      set noshellslash
-      return call(a:fn, a:000)
-    finally
-      let &shellslash = shellslash
-    endtry
-  endfunction
-
-  " Use utf-8 for fzf.vim commands
-  " Return array of shell commands for cmd.exe
-  function! s:enc_to_cp(str)
-    if !has('iconv')
-      return a:str
-    endif
-    if !exists('s:codepage')
-      let s:codepage = libcallnr('kernel32.dll', 'GetACP', 0)
-    endif
-    return iconv(a:str, &encoding, 'cp'.s:codepage)
-  endfunction
-  function! s:wrap_cmds(cmds)
-    return map(['@echo off']
-    \ + (has('gui_running') ? ['set TERM= > nul'] : [])
-    \ + (type(a:cmds) == type([]) ? a:cmds : [a:cmds]),
-    \ '<SID>enc_to_cp(v:val."\r")')
-  endfunction
-else
-  let s:term_marker = ";#FZF"
-
-  function! s:fzf_call(fn, ...)
-    return call(a:fn, a:000)
-  endfunction
-
-  function! s:wrap_cmds(cmds)
-    return a:cmds
-  endfunction
-
-  function! s:enc_to_cp(str)
-    return a:str
-  endfunction
-endif
+let s:base_dir = expand('<sfile>:h:h')
+let s:term_marker = ";#FZF"
 
 function! s:shellesc_cmd(arg)
   let e = '"'
@@ -78,72 +24,17 @@ function! s:shellesc_cmd(arg)
   return substitute(substitute(e, '[&|<>()^!"]', '^&', 'g'), '%', '%%', 'g')
 endfunction
 
-function! fzf#shellescape(arg, ...)
-  let shell = get(a:000, 0, s:is_win ? 'cmd.exe' : 'sh')
-  if shell =~# 'cmd.exe$'
-    return s:shellesc_cmd(a:arg)
-  endif
-  try
-    let [shell, &shell] = [&shell, shell]
-    return s:fzf_call('shellescape', a:arg)
-  finally
-    let [shell, &shell] = [&shell, shell]
-  endtry
-endfunction
-
-function! s:fzf_getcwd()
-  return s:fzf_call('getcwd')
-endfunction
-
-function! s:fzf_fnamemodify(fname, mods)
-  return s:fzf_call('fnamemodify', a:fname, a:mods)
-endfunction
-
 function! s:fzf_expand(fmt)
-  return s:fzf_call('expand', a:fmt, 1)
+  return expand(a:fmt, 1)
 endfunction
 
-function! s:fzf_tempname()
-  return s:fzf_call('tempname')
-endfunction
-
-let s:layout_keys = ['window', 'tmux', 'up', 'down', 'left', 'right']
+let s:layout_keys = ['window', 'up', 'down', 'left', 'right']
 let s:fzf_go = s:base_dir.'/bin/fzf'
-let s:fzf_tmux = s:base_dir.'/bin/fzf-tmux'
-
-let s:cpo_save = &cpo
-set cpo&vim
-
-function! s:popup_support()
-  return has('nvim') ? has('nvim-0.4') : has('popupwin') && has('patch-8.2.191')
-endfunction
 
 function! s:default_layout()
-  return s:popup_support()
+  return has('popupwin')
         \ ? { 'window' : { 'width': 0.9, 'height': 0.6 } }
         \ : { 'down': '~40%' }
-endfunction
-
-function! fzf#install()
-  if s:is_win && !has('win32unix')
-    let script = s:base_dir.'/install.ps1'
-    if !filereadable(script)
-      throw script.' not found'
-    endif
-    let script = 'powershell -ExecutionPolicy Bypass -file ' . shellescape(script)
-  else
-    let script = s:base_dir.'/install'
-    if !executable(script)
-      throw script.' not found'
-    endif
-    let script .= ' --bin'
-  endif
-
-  call s:warn('Running fzf installer ...')
-  call system(script)
-  if v:shell_error
-    throw 'Failed to download fzf: '.script
-  endif
 endfunction
 
 let s:versions = {}
@@ -151,7 +42,7 @@ function s:get_version(bin)
   if has_key(s:versions, a:bin)
     return s:versions[a:bin]
   end
-  let command = (&shell =~ 'powershell\|pwsh' ? '&' : '') . s:fzf_call('shellescape', a:bin) . ' --version --no-height'
+  let command = shellescape(a:bin) . ' --version --no-height'
   let output = systemlist(command)
   if v:shell_error || empty(output)
     return ''
@@ -191,14 +82,8 @@ function! fzf#exec(...)
     endif
 
     if empty(binaries)
-      if input('fzf executable not found. Download binary? (y/n) ') =~? '^y'
-        redraw
-        call fzf#install()
-        return fzf#exec()
-      else
-        redraw
-        throw 'fzf executable not found'
-      endif
+      redraw
+      throw 'fzf executable not found'
     elseif len(binaries) > 1
       call sort(binaries, 's:compare_binary_versions')
     endif
@@ -225,7 +110,6 @@ function! fzf#exec(...)
       let s:versions = {}
       unlet s:exec
       redraw
-      call fzf#install()
       return fzf#exec(min_version, 1)
     else
       throw printf('You need to upgrade fzf (required: %s or above)', min_version)
@@ -233,46 +117,6 @@ function! fzf#exec(...)
   endif
 
   return s:exec
-endfunction
-
-function! s:tmux_enabled()
-  if has('gui_running') || !exists('$TMUX')
-    return 0
-  endif
-
-  if exists('s:tmux')
-    return s:tmux
-  endif
-
-  let s:tmux = 0
-  if !executable(s:fzf_tmux)
-    if executable('fzf-tmux')
-      let s:fzf_tmux = 'fzf-tmux'
-    else
-      return 0
-    endif
-  endif
-
-  let output = system('tmux -V')
-  let s:tmux = !v:shell_error && output >= 'tmux 1.7'
-  return s:tmux
-endfunction
-
-function! s:escape(path)
-  let path = fnameescape(a:path)
-  return s:is_win ? escape(path, '$') : path
-endfunction
-
-function! s:error(msg)
-  echohl ErrorMsg
-  echom a:msg
-  echohl None
-endfunction
-
-function! s:warn(msg)
-  echohl WarningMsg
-  echom a:msg
-  echohl None
 endfunction
 
 function! s:has_any(dict, keys)
@@ -285,10 +129,10 @@ function! s:has_any(dict, keys)
 endfunction
 
 function! s:open(cmd, target)
-  if stridx('edit', a:cmd) == 0 && s:fzf_fnamemodify(a:target, ':p') ==# s:fzf_expand('%:p')
+  if stridx('edit', a:cmd) == 0 && fnamemodify(a:target, ':p') ==# s:fzf_expand('%:p')
     return
   endif
-  execute a:cmd s:escape(a:target)
+  execute a:cmd fnameescape(a:target)
 endfunction
 
 function! s:common_sink(action, lines) abort
@@ -303,7 +147,7 @@ function! s:common_sink(action, lines) abort
   if len(a:lines) > 1
     augroup fzf_swap
       autocmd SwapExists * let v:swapchoice='o'
-            \| call s:warn('fzf: E325: swap file exists: '.s:fzf_expand('<afile>'))
+            \| call fzf#utils#Warn('fzf: E325: swap file exists: '.s:fzf_expand('<afile>'))
     augroup END
   endif
   try
@@ -315,18 +159,17 @@ function! s:common_sink(action, lines) abort
       if has('win32unix') && item !~ '/'
         let item = substitute(item, '\', '/', 'g')
       end
-      if item[0] != '~' && item !~ (s:is_win ? '^\([A-Z]:\)\?\' : '^/')
-        let sep = s:is_win ? '\' : '/'
+      if item[0] != '~' && item !~ '^/'
+        let sep = '/'
         let item = join([cwd, item], cwd[len(cwd)-1] == sep ? '' : sep)
       endif
       if empty
-        execute 'e' s:escape(item)
+        execute 'e' fnameescape(item)
         let empty = 0
       else
         call s:open(Cmd, item)
       endif
-      if !has('patch-8.0.0177') && !has('nvim-0.2') && exists('#BufEnter')
-            \ && isdirectory(item)
+      if isdirectory(item)
         doautocmd BufEnter
       endif
     endfor
@@ -338,7 +181,7 @@ endfunction
 
 function! s:get_color(attr, ...)
   " Force 24 bit colors: g:fzf_force_termguicolors (temporary workaround for https://github.com/junegunn/fzf.vim/issues/1152)
-  let gui = get(g:, 'fzf_force_termguicolors', 0) || (!s:is_win && !has('win32unix') && has('termguicolors') && &termguicolors)
+  let gui = get(g:, 'fzf_force_termguicolors', 0) 
   let fam = gui ? 'gui' : 'cterm'
   let pat = gui ? '^#[a-f0-9]\+' : '^[0-9]\+$'
   for group in a:000
@@ -353,7 +196,7 @@ endfunction
 function! s:defaults()
   let rules = copy(get(g:, 'fzf_colors', {}))
   let colors = join(map(items(filter(map(rules, 'call("s:get_color", v:val)'), '!empty(v:val)')), 'join(v:val, ":")'), ',')
-  return empty(colors) ? '' : fzf#shellescape('--color='.colors)
+  return empty(colors) ? '' : shellescape('--color='.colors)
 endfunction
 
 function! s:validate_layout(layout)
@@ -368,7 +211,7 @@ endfunction
 
 function! s:evaluate_opts(options)
   return type(a:options) == type([]) ?
-        \ join(map(copy(a:options), 'fzf#shellescape(v:val)')) : a:options
+        \ join(map(copy(a:options), 'shellescape(v:val)')) : a:options
 endfunction
 
 " [name string,] [opts dict,] [fullscreen boolean]
@@ -415,7 +258,7 @@ function! fzf#wrap(...)
     if !isdirectory(dir)
       call mkdir(dir, 'p')
     endif
-    let history = fzf#shellescape(dir.'/'.name)
+    let history = shellescape(dir.'/'.name)
     let opts.options = join(['--history', history, opts.options])
   endif
 
@@ -430,19 +273,6 @@ function! fzf#wrap(...)
   endif
 
   return opts
-endfunction
-
-function! s:use_sh()
-  let [shell, shellslash, shellcmdflag, shellxquote] = [&shell, &shellslash, &shellcmdflag, &shellxquote]
-  if s:is_win
-    set shell=cmd.exe
-    set noshellslash
-    let &shellcmdflag = has('nvim') ? '/s /c' : '/c'
-    let &shellxquote = has('nvim') ? '"' : '('
-  else
-    set shell=sh
-  endif
-  return [shell, shellslash, shellcmdflag, shellxquote]
 endfunction
 
 function! s:writefile(...)
@@ -478,76 +308,63 @@ endfunction
 let s:need_cmd_window = has('win32unix') && $TERM_PROGRAM ==# 'mintty' && s:compare_versions($TERM_PROGRAM_VERSION, '3.4.5') < 0 && !executable('winpty')
 
 function! fzf#run(...) abort
-try
-  let [shell, shellslash, shellcmdflag, shellxquote] = s:use_sh()
-
-  let dict   = exists('a:1') ? copy(a:1) : {}
-  let temps  = { 'result': s:fzf_tempname() }
-  let optstr = s:evaluate_opts(get(dict, 'options', ''))
   try
-    let fzf_exec = shellescape(fzf#exec())
-  catch
-    throw v:exception
-  endtry
+    let dict   = exists('a:1') ? copy(a:1) : {}
+    let temps  = { 'result': tempname() }
+    let optstr = s:evaluate_opts(get(dict, 'options', ''))
+    try
+      let fzf_exec = shellescape(fzf#exec())
+    catch
+      throw v:exception
+    endtry
 
-  if !s:present(dict, 'dir')
-    let dict.dir = s:fzf_getcwd()
-  endif
-  if has('win32unix') && s:present(dict, 'dir')
-    let dict.dir = fnamemodify(dict.dir, ':p')
-  endif
-
-  if has_key(dict, 'source')
-    let source = dict.source
-    let type = type(source)
-    if type == 1
-      let prefix = '('.source.')|'
-    elseif type == 3
-      let temps.input = s:fzf_tempname()
-      call s:writefile(source, temps.input)
-      let prefix = (s:is_win ? 'type ' : 'command cat ').fzf#shellescape(temps.input).'|'
-    else
-      throw 'Invalid source type'
+    if !s:present(dict, 'dir')
+      let dict.dir = getcwd()
     endif
-  else
-    let prefix = ''
-  endif
+    if has('win32unix') && s:present(dict, 'dir')
+      let dict.dir = fnamemodify(dict.dir, ':p')
+    endif
 
-  let prefer_tmux = get(g:, 'fzf_prefer_tmux', 0) || has_key(dict, 'tmux')
-  let use_height = has_key(dict, 'down') && !has('gui_running') &&
-        \ !(has('nvim') || s:is_win || has('win32unix') || s:present(dict, 'up', 'left', 'right', 'window')) &&
-        \ executable('tput') && filereadable('/dev/tty')
-  let has_vim8_term = has('terminal') && has('patch-8.0.995')
-  let has_nvim_term = has('nvim-0.2.1') || has('nvim') && !s:is_win
-  let use_term = has_nvim_term || has_vim8_term
-    \ && !s:need_cmd_window
-    \ && (has('gui_running') || s:is_win || s:present(dict, 'down', 'up', 'left', 'right', 'window'))
-  let use_tmux = (has_key(dict, 'tmux') || (!use_height && !use_term || prefer_tmux) && !has('win32unix') && s:splittable(dict)) && s:tmux_enabled()
-  if prefer_tmux && use_tmux
-    let use_height = 0
-    let use_term = 0
-  endif
-  if use_term
-    let optstr .= ' --no-height --no-tmux'
-  elseif use_height
-    let height = s:calc_size(&lines, dict.down, dict)
-    let optstr .= ' --no-tmux --height='.height
-  endif
-  " Respect --border option given in $FZF_DEFAULT_OPTS and 'options'
-  let optstr = join([s:border_opt(get(dict, 'window', 0)), s:extract_option($FZF_DEFAULT_OPTS, 'border'), optstr])
-  let command = prefix.(use_tmux ? s:fzf_tmux(dict) : fzf_exec).' '.optstr.' > '.temps.result
+    if has_key(dict, 'source')
+      let source = dict.source
+      let type = type(source)
+      if type == 1
+        let prefix = '('.source.')|'
+      elseif type == 3
+        let temps.input = tempname()
+        call s:writefile(source, temps.input)
+        let prefix = 'command cat '.shellescape(temps.input).'|'
+      else
+        throw 'Invalid source type'
+      endif
+    else
+      let prefix = ''
+    endif
 
-  if use_term
-    return s:execute_term(dict, command, temps)
-  endif
+    let use_height = has_key(dict, 'down') && !has('gui_running') &&
+          \ !(s:present(dict, 'up', 'left', 'right', 'window')) &&
+          \ executable('tput') && filereadable('/dev/tty')
+    let use_term = has('terminal')
+          \ && !s:need_cmd_window
+          \ && (has('gui_running') || s:present(dict, 'down', 'up', 'left', 'right', 'window'))
+    if use_term
+      let optstr .= ' --no-height --no-tmux'
+    elseif use_height
+      let height = s:calc_size(&lines, dict.down, dict)
+      let optstr .= ' --no-tmux --height='.height
+    endif
+    " Respect --border option given in $FZF_DEFAULT_OPTS and 'options'
+    let optstr = join([s:border_opt(get(dict, 'window', 0)), s:extract_option($FZF_DEFAULT_OPTS, 'border'), optstr])
+    let command = prefix.fzf_exec.' '.optstr.' > '.temps.result
 
-  let lines = use_tmux ? s:execute_tmux(dict, command, temps)
-                 \ : s:execute(dict, command, use_height, temps)
-  call s:callback(dict, lines)
-  return lines
-finally
-  let [&shell, &shellslash, &shellcmdflag, &shellxquote] = [shell, shellslash, shellcmdflag, shellxquote]
-endtry
+    if use_term
+      return s:execute_term(dict, command, temps)
+    endif
+
+    let lines = s:execute(dict, command, use_height, temps)
+    call s:callback(dict, lines)
+    return lines
+  endtry
 endfunction
 
 function! s:present(dict, ...)
@@ -559,28 +376,6 @@ function! s:present(dict, ...)
   return 0
 endfunction
 
-function! s:fzf_tmux(dict)
-  let size = get(a:dict, 'tmux', '')
-  if empty(size)
-    for o in ['up', 'down', 'left', 'right']
-      if s:present(a:dict, o)
-        let size = o . ',' . a:dict[o]
-        break
-      endif
-    endfor
-  endif
-
-  " Legacy fzf-tmux options
-  if size =~ '-'
-    return printf('LINES=%d COLUMNS=%d %s %s %s --',
-          \ &lines, &columns, fzf#shellescape(s:fzf_tmux), size, (has_key(a:dict, 'source') ? '' : '-'))
-  end
-
-  " Using native --tmux option
-  let in = (has_key(a:dict, 'source') ? '' : ' --force-tty-in')
-  return printf('%s --tmux %s%s', fzf#shellescape(fzf#exec()), size, in)
-endfunction
-
 function! s:splittable(dict)
   return s:present(a:dict, 'up', 'down') && &lines > 15 ||
         \ s:present(a:dict, 'left', 'right') && &columns > 40
@@ -588,14 +383,14 @@ endfunction
 
 function! s:pushd(dict)
   if s:present(a:dict, 'dir')
-    let cwd = s:fzf_getcwd()
+    let cwd = getcwd()
     let w:fzf_pushd = {
-    \   'command': haslocaldir() ? 'lcd' : (exists(':tcd') && haslocaldir(-1) ? 'tcd' : 'cd'),
-    \   'origin': cwd,
-    \   'bufname': bufname('')
-    \ }
-    execute 'lcd' s:escape(a:dict.dir)
-    let cwd = s:fzf_getcwd()
+          \   'command': haslocaldir() ? 'lcd' : (exists(':tcd') && haslocaldir(-1) ? 'tcd' : 'cd'),
+          \   'origin': cwd,
+          \   'bufname': bufname('')
+          \ }
+    execute 'lcd' fnameescape(a:dict.dir)
+    let cwd = getcwd()
     let w:fzf_pushd.dir = cwd
     let a:dict.pushd = w:fzf_pushd
     return cwd
@@ -628,34 +423,18 @@ function! s:dopopd()
   " matches 'dir' entry. However, it is possible that the sink function did
   " change the directory to 'dir'. In that case, the user will have an
   " unexpected result.
-  if s:fzf_getcwd() ==# w:fzf_pushd.dir && (!&autochdir || w:fzf_pushd.bufname ==# bufname(''))
-    execute w:fzf_pushd.command s:escape(w:fzf_pushd.origin)
+  if getcwd() ==# w:fzf_pushd.dir && (!&autochdir || w:fzf_pushd.bufname ==# bufname(''))
+    execute w:fzf_pushd.command fnameescape(w:fzf_pushd.origin)
   endif
   unlet! w:fzf_pushd
 endfunction
-
-function! s:xterm_launcher()
-  let fmt = 'xterm -T "[fzf]" -bg "%s" -fg "%s" -geometry %dx%d+%d+%d -e bash -ic %%s'
-  if has('gui_macvim')
-    let fmt .= '&& osascript -e "tell application \"MacVim\" to activate"'
-  endif
-  return printf(fmt,
-    \ escape(synIDattr(hlID("Normal"), "bg"), '#'), escape(synIDattr(hlID("Normal"), "fg"), '#'),
-    \ &columns, &lines/2, getwinposx(), getwinposy())
-endfunction
-unlet! s:launcher
-if s:is_win || has('win32unix')
-  let s:launcher = '%s'
-else
-  let s:launcher = function('s:xterm_launcher')
-endif
 
 function! s:exit_handler(dict, code, command, ...)
   if has_key(a:dict, 'exit')
     call a:dict.exit(a:code)
   endif
   if a:code == 2
-    call s:error('Error running ' . a:command)
+    call fzf#utils#Error('Error running ' . a:command)
     if !empty(a:000)
       sleep
     endif
@@ -668,7 +447,7 @@ function! s:execute(dict, command, use_height, temps) abort
   if has('unix') && !a:use_height
     silent! !clear 2> /dev/null
   endif
-  let escaped = (a:use_height || s:is_win) ? a:command : escape(substitute(a:command, '\n', '\\n', 'g'), '%#!')
+  let escaped = (a:use_height) ? a:command : escape(substitute(a:command, '\n', '\\n', 'g'), '%#!')
   if has('gui_running')
     let Launcher = get(a:dict, 'launcher', get(g:, 'Fzf_launcher', get(g:, 'fzf_launcher', s:launcher)))
     let fmt = type(Launcher) == 2 ? call(Launcher, []) : Launcher
@@ -679,26 +458,8 @@ function! s:execute(dict, command, use_height, temps) abort
   else
     let command = escaped
   endif
-  if s:is_win
-    let batchfile = s:fzf_tempname().'.bat'
-    call s:writefile(s:wrap_cmds(command), batchfile)
-    let command = batchfile
-    let a:temps.batchfile = batchfile
-    if has('nvim')
-      let fzf = {}
-      let fzf.dict = a:dict
-      let fzf.temps = a:temps
-      function! fzf.on_exit(job_id, exit_status, event) dict
-        call s:pushd(self.dict)
-        let lines = s:collect(self.temps)
-        call s:callback(self.dict, lines)
-      endfunction
-      let cmd = 'start /wait cmd /c '.command
-      call jobstart(cmd, fzf)
-      return []
-    endif
-  elseif s:need_cmd_window
-    let shellscript = s:fzf_tempname()
+  if s:need_cmd_window
+    let shellscript = tempname()
     call s:writefile([command], shellscript)
     let command = 'start //WAIT sh -c '.shellscript
     let a:temps.shellscript = shellscript
@@ -709,21 +470,6 @@ function! s:execute(dict, command, use_height, temps) abort
   else
     execute 'silent !'.command
   endif
-  let exit_status = v:shell_error
-  redraw!
-  let lines = s:collect(a:temps)
-  return s:exit_handler(a:dict, exit_status, command) < 2 ? lines : []
-endfunction
-
-function! s:execute_tmux(dict, command, temps) abort
-  let command = a:command
-  let cwd = s:pushd(a:dict)
-  if len(cwd)
-    " -c '#{pane_current_path}' is only available on tmux 1.9 or above
-    let command = join(['cd', fzf#shellescape(cwd), '&&', command])
-  endif
-
-  call system(command)
   let exit_status = v:shell_error
   redraw!
   let lines = s:collect(a:temps)
@@ -787,17 +533,18 @@ endfunction
 
 function! s:split(dict)
   let directions = {
-  \ 'up':    ['topleft', 'resize', &lines],
-  \ 'down':  ['botright', 'resize', &lines],
-  \ 'left':  ['vertical topleft', 'vertical resize', &columns],
-  \ 'right': ['vertical botright', 'vertical resize', &columns] }
+        \ 'up':    ['topleft', 'resize', &lines],
+        \ 'down':  ['botright', 'resize', &lines],
+        \ 'left':  ['vertical topleft', 'vertical resize', &columns],
+        \ 'right': ['vertical botright', 'vertical resize', &columns] 
+        \}
   let ppos = s:getpos()
   let is_popup = 0
   try
     if s:present(a:dict, 'window')
       if type(a:dict.window) == type({})
-        if !s:popup_support()
-          throw 'Nvim 0.4+ or Vim 8.2.191+ with popupwin feature is required for pop-up window'
+        if !has('popupwin')
+          throw 'Vim with popupwin feature is required for pop-up window'
         end
         call s:popup(a:dict.window)
         let is_popup = 1
@@ -830,19 +577,12 @@ function! s:split(dict)
   endtry
 endfunction
 
-nnoremap <silent> <Plug>(fzf-insert) i
-nnoremap <silent> <Plug>(fzf-normal) <Nop>
-if exists(':tnoremap')
-  tnoremap <silent> <Plug>(fzf-insert) <C-\><C-n>i
-  tnoremap <silent> <Plug>(fzf-normal) <C-\><C-n>
-endif
-
 let s:warned = 0
 function! s:handle_ambidouble(dict)
   if &ambiwidth == 'double'
     let a:dict.env = { 'RUNEWIDTH_EASTASIAN': '1' }
   elseif !s:warned && $RUNEWIDTH_EASTASIAN == '1' && &ambiwidth !=# 'double'
-    call s:warn("$RUNEWIDTH_EASTASIAN is '1' but &ambiwidth is not 'double'")
+    call fzf#utils#Warn("$RUNEWIDTH_EASTASIAN is '1' but &ambiwidth is not 'double'")
     2sleep
     let s:warned = 1
   endif
@@ -852,11 +592,11 @@ function! s:execute_term(dict, command, temps) abort
   let winrest = winrestcmd()
   let pbuf = bufnr('')
   let [ppos, winopts, is_popup] = s:split(a:dict)
-  call s:use_sh()
   let b:fzf = a:dict
   let fzf = { 'buf': bufnr(''), 'pbuf': pbuf, 'ppos': ppos, 'dict': a:dict, 'temps': a:temps,
-            \ 'winopts': winopts, 'winrest': winrest, 'lines': &lines,
-            \ 'columns': &columns, 'command': a:command }
+        \ 'winopts': winopts, 'winrest': winrest, 'lines': &lines,
+        \ 'columns': &columns, 'command': a:command }
+
   function! fzf.switch_back(inplace)
     if a:inplace && bufnr('') == self.buf
       if bufexists(self.pbuf)
@@ -868,6 +608,7 @@ function! s:execute_term(dict, command, temps) abort
       endif
     endif
   endfunction
+
   function! fzf.on_exit(id, code, ...)
     if s:getpos() == self.ppos " {'window': 'enew'}
       for [opt, val] in items(self.winopts)
@@ -877,7 +618,7 @@ function! s:execute_term(dict, command, temps) abort
     else
       if bufnr('') == self.buf
         " We use close instead of bd! since Vim does not close the split when
-        " there's no other listed buffer (nvim +'set nobuflisted')
+        " there's no other listed buffer ('set nobuflisted')
         close
       endif
       silent! execute 'tabnext' self.ppos.tab
@@ -908,38 +649,21 @@ function! s:execute_term(dict, command, temps) abort
 
   try
     call s:pushd(a:dict)
-    if s:is_win
-      let fzf.temps.batchfile = s:fzf_tempname().'.bat'
-      call s:writefile(s:wrap_cmds(a:command), fzf.temps.batchfile)
-      let command = fzf.temps.batchfile
-    else
-      let command = a:command
-    endif
+    let command = a:command
     let command .= s:term_marker
-    if has('nvim')
-      call s:handle_ambidouble(fzf)
-      call termopen(command, fzf)
+    let term_opts = {'exit_cb': function(fzf.on_exit), 'term_kill': 'term'}
+    if is_popup
+      let term_opts.hidden = 1
     else
-      let term_opts = {'exit_cb': function(fzf.on_exit)}
-      if v:version >= 802
-        let term_opts.term_kill = 'term'
-      endif
-      if is_popup
-        let term_opts.hidden = 1
-      else
-        let term_opts.curwin = 1
-      endif
-      call s:handle_ambidouble(term_opts)
-      keepjumps let fzf.buf = term_start([&shell, &shellcmdflag, command], term_opts)
-      if is_popup && exists('#TerminalWinOpen')
-        doautocmd <nomodeline> TerminalWinOpen
-      endif
-      if !has('patch-8.0.1261') && !s:is_win
-        call term_wait(fzf.buf, 20)
-      endif
+      let term_opts.curwin = 1
+    endif
+    call s:handle_ambidouble(term_opts)
+    keepjumps let fzf.buf = term_start([&shell, &shellcmdflag, command], term_opts)
+    if is_popup
+      doautocmd <nomodeline> TerminalWinOpen
     endif
     tnoremap <buffer> <c-z> <nop>
-    if exists('&termwinkey') && (empty(&termwinkey) || &termwinkey =~? '<c-w>')
+    if empty(&termwinkey) || &termwinkey =~? '<c-w>'
       tnoremap <buffer> <c-w> <c-w>.
     endif
   finally
@@ -973,7 +697,7 @@ function! s:callback(dict, lines) abort
         if type(a:dict.sink) == 2
           call a:dict.sink(line)
         else
-          execute a:dict.sink s:escape(line)
+          execute a:dict.sink fnameescape(line)
         endif
       endfor
     endif
@@ -995,30 +719,6 @@ function! s:callback(dict, lines) abort
   endif
 endfunction
 
-if has('nvim')
-  function s:create_popup(opts) abort
-    let buf = nvim_create_buf(v:false, v:true)
-    let opts = extend({'relative': 'editor', 'style': 'minimal'}, a:opts)
-    let win = nvim_open_win(buf, v:true, opts)
-    silent! call setwinvar(win, '&winhighlight', 'Pmenu:,Normal:Normal')
-    call setwinvar(win, '&colorcolumn', '')
-    return buf
-  endfunction
-else
-  function! s:create_popup(opts) abort
-    let s:popup_create = {buf -> popup_create(buf, #{
-      \ line: a:opts.row,
-      \ col: a:opts.col,
-      \ minwidth: a:opts.width,
-      \ maxwidth: a:opts.width,
-      \ minheight: a:opts.height,
-      \ maxheight: a:opts.height,
-      \ zindex: 1000,
-    \ })}
-    autocmd TerminalOpen * ++once call s:popup_create(str2nr(expand('<abuf>')))
-  endfunction
-endif
-
 function! s:popup(opts) abort
   let xoffset = get(a:opts, 'xoffset', 0.5)
   let yoffset = get(a:opts, 'yoffset', 0.5)
@@ -1026,67 +726,48 @@ function! s:popup(opts) abort
 
   " Use current window size for positioning relatively positioned popups
   let columns = relative ? winwidth(0) : &columns
-  let lines = relative ? winheight(0) : (&lines - has('nvim'))
+  let lines = relative ? winheight(0) : &lines
 
   " Size and position
   let width = min([max([8, a:opts.width > 1 ? a:opts.width : float2nr(columns * a:opts.width)]), columns])
   let height = min([max([4, a:opts.height > 1 ? a:opts.height : float2nr(lines * a:opts.height)]), lines])
-  let row = float2nr(yoffset * (lines - height)) + (relative ? win_screenpos(0)[0] - 1 : 0)
-  let col = float2nr(xoffset * (columns - width)) + (relative ? win_screenpos(0)[1] - 1 : 0)
+  let row = float2nr(yoffset * (lines - height)) + (relative ? win_screenpos(0)[0] : 1)
+  let col = float2nr(xoffset * (columns - width)) + (relative ? win_screenpos(0)[1] : 1)
 
   " Managing the differences
-  let row = min([max([0, row]), &lines - has('nvim') - height])
+  let row = min([max([0, row]), &lines - height])
   let col = min([max([0, col]), &columns - width])
-  let row += !has('nvim')
-  let col += !has('nvim')
 
-  call s:create_popup({
-    \ 'row': row, 'col': col, 'width': width, 'height': height
-  \ })
+  let s:popup_create = {buf -> popup_create(buf, #{
+        \ line: row,
+        \ col: col,
+        \ minwidth: width,
+        \ maxwidth: width,
+        \ minheight: height,
+        \ maxheight: height,
+        \ zindex: 1000,
+        \ })}
+
+  autocmd TerminalOpen * ++once call s:popup_create(str2nr(expand('<abuf>')))
 endfunction
 
 let s:default_action = {
-  \ 'ctrl-t': 'tab split',
-  \ 'ctrl-x': 'split',
-  \ 'ctrl-v': 'vsplit' }
+      \ 'ctrl-t': 'tab split',
+      \ 'ctrl-x': 'split',
+      \ 'ctrl-s': 'split',
+      \ 'ctrl-v': 'vsplit' }
 
 function! s:shortpath()
   let short = fnamemodify(getcwd(), ':~:.')
   if !has('win32unix')
     let short = pathshorten(short)
   endif
-  let slash = (s:is_win && !&shellslash) ? '\' : '/'
+  let slash = '/'
   return empty(short) ? '~'.slash : short . (short =~ escape(slash, '\').'$' ? '' : slash)
 endfunction
 
-function! s:cmd(bang, ...) abort
-  let args = copy(a:000)
-  let opts = { 'options': ['--multi'] }
-  if len(args) && isdirectory(expand(args[-1]))
-    let opts.dir = substitute(substitute(remove(args, -1), '\\\(["'']\)', '\1', 'g'), '[/\\]*$', '/', '')
-    if s:is_win && !&shellslash
-      let opts.dir = substitute(opts.dir, '/', '\\', 'g')
-    endif
-    let prompt = opts.dir
-  else
-    let prompt = s:shortpath()
-  endif
-  let prompt = strwidth(prompt) < &columns - 20 ? prompt : '> '
-  call extend(opts.options, ['--prompt', prompt])
-  call extend(opts.options, args)
-  call fzf#run(fzf#wrap('FZF', opts, a:bang))
-endfunction
-
-command! -nargs=* -complete=dir -bang FZF call s:cmd(<bang>0, <f-args>)
-
-function! s:conf(name, default)
-  let conf = get(g:, 'fzf_vim', {})
-  let val = get(conf, a:name, get(g:, 'fzf_' . a:name, a:default))
-  return val
-endfunction
-
 function! s:defs(commands)
-  let prefix = s:conf('command_prefix', '')
+  let prefix = fzf#utils#Conf('command_prefix', '')
   if prefix =~# '^[^A-Z]'
     echoerr 'g:fzf_command_prefix must start with an uppercase letter'
     return
@@ -1100,81 +781,14 @@ function! s:defs(commands)
 endfunction
 
 call s:defs([
-\'command!      -bang -nargs=? -complete=dir Files              call fzf#vim#files(<q-args>, fzf#vim#with_preview(), <bang>0)',
-\'command!      -bang -nargs=? GitFiles                         call fzf#vim#gitfiles(<q-args>, fzf#vim#with_preview(<q-args> == "?" ? { "placeholder": "" } : {}), <bang>0)',
-\'command!      -bang -nargs=? GFiles                           call fzf#vim#gitfiles(<q-args>, fzf#vim#with_preview(<q-args> == "?" ? { "placeholder": "" } : {}), <bang>0)',
-\'command! -bar -bang -nargs=? -complete=buffer Buffers         call fzf#vim#buffers(<q-args>, fzf#vim#with_preview({ "placeholder": "{1}" }), <bang>0)',
-\'command!      -bang -nargs=* Lines                            call fzf#vim#lines(<q-args>, <bang>0)',
-\'command!      -bang -nargs=* BLines                           call fzf#vim#buffer_lines(<q-args>, <bang>0)',
-\'command! -bar -bang Colors                                    call fzf#vim#colors(<bang>0)',
-\'command!      -bang -nargs=+ -complete=dir Locate             call fzf#vim#locate(<q-args>, fzf#vim#with_preview(), <bang>0)',
-\'command!      -bang -nargs=* Ag                               call fzf#vim#ag(<q-args>, fzf#vim#with_preview(), <bang>0)',
-\'command!      -bang -nargs=* Rg                               call fzf#vim#grep("rg --column --line-number --no-heading --color=always --smart-case -- ".fzf#shellescape(<q-args>), fzf#vim#with_preview(), <bang>0)',
-\'command!      -bang -nargs=* RG                               call fzf#vim#grep2("rg --column --line-number --no-heading --color=always --smart-case -- ", <q-args>, fzf#vim#with_preview(), <bang>0)',
-\'command!      -bang -nargs=* Tags                             call fzf#vim#tags(<q-args>, fzf#vim#with_preview({ "placeholder": "--tag {2}:{-1}:{3..}" }), <bang>0)',
-\'command!      -bang -nargs=* BTags                            call fzf#vim#buffer_tags(<q-args>, fzf#vim#with_preview({ "placeholder": "{2}:{3..}" }), <bang>0)',
-\'command! -bar -bang Snippets                                  call fzf#vim#snippets(<bang>0)',
-\'command! -bar -bang Commands                                  call fzf#vim#commands(<bang>0)',
-\'command! -bar -bang Jumps                                     call fzf#vim#jumps(fzf#vim#with_preview({ "placeholder": "{2..4}"}), <bang>0)',
-\'command! -bar -bang Marks                                     call fzf#vim#marks(<bang>0)',
-\'command! -bar -bang Changes                                   call fzf#vim#changes(<bang>0)',
-\'command! -bar -bang Helptags                                  call fzf#vim#helptags(fzf#vim#with_preview({ "placeholder": "--tag {2}:{3}:{4}" }), <bang>0)',
-\'command! -bar -bang Windows                                   call fzf#vim#windows(fzf#vim#with_preview({ "placeholder": "{2}" }), <bang>0)',
-\'command! -bar -bang -nargs=* -range=% -complete=file Commits  let b:fzf_winview = winsaveview() | <line1>,<line2>call fzf#vim#commits(<q-args>, fzf#vim#with_preview({ "placeholder": "" }), <bang>0)',
-\'command! -bar -bang -nargs=* -range=% BCommits                let b:fzf_winview = winsaveview() | <line1>,<line2>call fzf#vim#buffer_commits(<q-args>, fzf#vim#with_preview({ "placeholder": "" }), <bang>0)',
-\'command! -bar -bang Maps                                      call fzf#vim#maps("n", <bang>0)',
-\'command! -bar -bang Filetypes                                 call fzf#vim#filetypes(<bang>0)',
-\'command!      -bang -nargs=* History                          call s:history(<q-args>, fzf#vim#with_preview(), <bang>0)'])
-
-function! s:history(arg, extra, bang)
-  let bang = a:bang || a:arg[len(a:arg)-1] == '!'
-  if a:arg[0] == ':'
-    call fzf#vim#command_history(bang)
-  elseif a:arg[0] == '/'
-    call fzf#vim#search_history(bang)
-  else
-    call fzf#vim#history(a:extra, bang)
-  endif
-endfunction
-
-function! fzf#complete(...)
-  return call('fzf#vim#complete', a:000)
-endfunction
-
-if (has('nvim') || has('terminal') && has('patch-8.0.995')) && (s:conf('statusline', 1) || s:conf('nvim_statusline', 1))
-  function! s:fzf_restore_colors()
-    if exists('#User#FzfStatusLine')
-      doautocmd User FzfStatusLine
-    else
-      if $TERM !~ "256color"
-        highlight default fzf1 ctermfg=1 ctermbg=8 guifg=#E12672 guibg=#565656
-        highlight default fzf2 ctermfg=2 ctermbg=8 guifg=#BCDDBD guibg=#565656
-        highlight default fzf3 ctermfg=7 ctermbg=8 guifg=#D9D9D9 guibg=#565656
-      else
-        highlight default fzf1 ctermfg=161 ctermbg=238 guifg=#E12672 guibg=#565656
-        highlight default fzf2 ctermfg=151 ctermbg=238 guifg=#BCDDBD guibg=#565656
-        highlight default fzf3 ctermfg=252 ctermbg=238 guifg=#D9D9D9 guibg=#565656
-      endif
-      setlocal statusline=%#fzf1#\ >\ %#fzf2#fz%#fzf3#f
-    endif
-  endfunction
-
-  function! s:fzf_vim_term()
-    if get(w:, 'airline_active', 0)
-      let w:airline_disabled = 1
-      autocmd BufWinLeave <buffer> let w:airline_disabled = 0
-    endif
-    autocmd WinEnter,ColorScheme <buffer> call s:fzf_restore_colors()
-
-    setlocal nospell
-    call s:fzf_restore_colors()
-  endfunction
-
-  augroup _fzf_statusline
-    autocmd!
-    autocmd FileType fzf call s:fzf_vim_term()
-  augroup END
-endif
+      \'command!      -bang -nargs=? -complete=dir Files      call fzf#vim#files(<q-args>, fzf#vim#with_preview(), <bang>0)',
+      \'command! -bar -bang -nargs=? -complete=buffer Buffers call fzf#vim#buffers(<q-args>, fzf#vim#with_preview({ "placeholder": "{1}" }), <bang>0)',
+      \'command! -bar -bang Colors                            call fzf#vim#colors(<bang>0)',
+      \'command!      -bang -nargs=* Rg                       call fzf#vim#grep("rg --column --line-number --no-heading --color=always --smart-case -- ".shellescape(<q-args>), fzf#vim#with_preview(), <bang>0)',
+      \'command! -bar -bang Snippets                          call fzf#vim#snippets(<bang>0)',
+      \'command! -bar -bang Commands                          call fzf#vim#commands(<bang>0)',
+      \'command! -bar -bang Helptags                          call fzf#vim#helptags(fzf#vim#with_preview({ "placeholder": "--tag {2}:{3}:{4}" }), <bang>0)',
+      \])
 
 if !exists('g:fzf#vim#buffers')
   let g:fzf#vim#buffers = {}
@@ -1182,19 +796,6 @@ endif
 
 augroup fzf_buffers
   autocmd!
-  if exists('*reltimefloat')
-    autocmd BufWinEnter,WinEnter * let g:fzf#vim#buffers[bufnr('')] = reltimefloat(reltime())
-  else
-    autocmd BufWinEnter,WinEnter * let g:fzf#vim#buffers[bufnr('')] = localtime()
-  endif
+  autocmd BufWinEnter,WinEnter * let g:fzf#vim#buffers[bufnr('')] = localtime()
   autocmd BufDelete * silent! call remove(g:fzf#vim#buffers, expand('<abuf>'))
 augroup END
-
-nnoremap <silent> <plug>(fzf-maps-n) :<c-u>call fzf#vim#maps('n', 0)<cr>
-inoremap <silent> <plug>(fzf-maps-i) <c-o>:call fzf#vim#maps('i', 0)<cr>
-xnoremap <silent> <plug>(fzf-maps-x) :<c-u>call fzf#vim#maps('x', 0)<cr>
-onoremap <silent> <plug>(fzf-maps-o) <c-c>:<c-u>call fzf#vim#maps('o', 0)<cr>
-
-let &cpo = s:cpo_save
-unlet s:cpo_save
-
